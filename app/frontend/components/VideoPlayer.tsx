@@ -1,150 +1,267 @@
 import { useEffect, useRef, useState } from "react";
 
-interface VideoProgress {
-  position: number;
-  duration: number;
-  percentage: number;
-  completed: boolean;
+interface VideoPlayerProps {
+  videoUrl: string;
+  title?: string;
 }
 
-export default function VideoPlayer() {
+export default function VideoPlayer({
+  videoUrl,
+  title = "Course Video",
+}: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
 
-  const [progress, setProgress] = useState<VideoProgress>({
-    position: 0,
-    duration: 0,
-    percentage: 0,
-    completed: false,
-  });
+  const [playing, setPlaying] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
 
-  const videoId = "video-123";
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
 
-  /**
-   * Fetch progress from backend
-   */
-  const fetchProgress = async () => {
-    try {
-      const response = await fetch(`/api/videos/${videoId}/progress`);
-      const data = await response.json();
+  const [volume, setVolume] = useState(1);
+  const [muted, setMuted] = useState(false);
 
-      setProgress(data);
+  const [playbackRate, setPlaybackRate] = useState(1);
 
-      if (videoRef.current) {
-        videoRef.current.currentTime = data.position;
-      }
-    } catch (error) {
-      console.error(error);
-    }
+  const formatTime = (seconds: number) => {
+    if (!seconds) return "00:00";
+
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+
+    return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
   };
 
-  /**
-   * Save progress
-   */
-  const saveProgress = async (payload: VideoProgress) => {
-    try {
-      await fetch(`/api/videos/${videoId}/progress`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
-    } catch (error) {
-      console.error(error);
-    }
-  };
-
-  /**
-   * Update local state while watching
-   */
-  const handleTimeUpdate = () => {
+  const togglePlay = () => {
     if (!videoRef.current) return;
 
-    const currentTime = videoRef.current.currentTime;
-    const duration = videoRef.current.duration;
+    if (playing) {
+      videoRef.current.pause();
+    } else {
+      videoRef.current.play();
+    }
 
-    const percentage = duration
-      ? Number(((currentTime / duration) * 100).toFixed(2))
-      : 0;
-
-    const completed = percentage >= 95;
-
-    setProgress({
-      position: currentTime,
-      duration,
-      percentage,
-      completed,
-    });
+    setPlaying(!playing);
   };
 
-  /**
-   * Resume playback
-   */
+  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!videoRef.current) return;
+
+    const value = Number(e.target.value);
+
+    videoRef.current.currentTime = value;
+
+    setCurrentTime(value);
+  };
+
+  const handleVolume = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!videoRef.current) return;
+
+    const value = Number(e.target.value);
+
+    videoRef.current.volume = value;
+
+    setVolume(value);
+  };
+
+  const toggleMute = () => {
+    if (!videoRef.current) return;
+
+    videoRef.current.muted = !muted;
+
+    setMuted(!muted);
+  };
+
+  const changeSpeed = (speed: number) => {
+    if (!videoRef.current) return;
+
+    videoRef.current.playbackRate = speed;
+
+    setPlaybackRate(speed);
+  };
+
+  const toggleFullscreen = async () => {
+    if (!videoRef.current) return;
+
+    if (document.fullscreenElement) {
+      await document.exitFullscreen();
+    } else {
+      await videoRef.current.requestFullscreen();
+    }
+  };
+
   useEffect(() => {
-    fetchProgress();
+    const video = videoRef.current;
+
+    if (!video) return;
+
+    const update = () => {
+      setCurrentTime(video.currentTime);
+      setDuration(video.duration || 0);
+    };
+
+    const loaded = () => setLoading(false);
+
+    const failed = () => {
+      setLoading(false);
+      setError(true);
+    };
+
+    video.addEventListener("timeupdate", update);
+    video.addEventListener("loadedmetadata", loaded);
+    video.addEventListener("error", failed);
+
+    return () => {
+      video.removeEventListener("timeupdate", update);
+      video.removeEventListener("loadedmetadata", loaded);
+      video.removeEventListener("error", failed);
+    };
   }, []);
 
-  /**
-   * Save every 10 seconds
-   */
-  useEffect(() => {
-    const interval = setInterval(() => {
-      saveProgress(progress);
-    }, 10000);
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    switch (e.key) {
+      case " ":
+      case "Enter":
+        e.preventDefault();
+        togglePlay();
+        break;
 
-    return () => clearInterval(interval);
-  }, [progress]);
+      case "ArrowRight":
+        if (videoRef.current)
+          videoRef.current.currentTime += 10;
+        break;
 
-  /**
-   * Save before leaving page
-   */
-  useEffect(() => {
-    const handleBeforeUnload = () => {
-      saveProgress(progress);
-    };
+      case "ArrowLeft":
+        if (videoRef.current)
+          videoRef.current.currentTime -= 10;
+        break;
 
-    window.addEventListener("beforeunload", handleBeforeUnload);
+      case "ArrowUp":
+        if (videoRef.current)
+          videoRef.current.volume = Math.min(videoRef.current.volume + 0.1, 1);
+        break;
 
-    return () =>
-      window.removeEventListener("beforeunload", handleBeforeUnload);
-  }, [progress]);
+      case "ArrowDown":
+        if (videoRef.current)
+          videoRef.current.volume = Math.max(videoRef.current.volume - 0.1, 0);
+        break;
 
-  /**
-   * Save when video ends
-   */
-  const handleEnded = () => {
-    const completedProgress = {
-      ...progress,
-      position: progress.duration,
-      percentage: 100,
-      completed: true,
-    };
-
-    setProgress(completedProgress);
-    saveProgress(completedProgress);
+      case "m":
+      case "M":
+        toggleMute();
+        break;
+    }
   };
 
-  return (
-    <div className="max-w-4xl mx-auto p-6">
-      <video
-        ref={videoRef}
-        controls
-        className="w-full rounded-lg"
-        onTimeUpdate={handleTimeUpdate}
-        onEnded={handleEnded}
-      >
-        <source src="/videos/demo.mp4" type="video/mp4" />
-      </video>
-
-      <div className="mt-5 space-y-2">
-        <p>Current Position: {Math.floor(progress.position)} sec</p>
-
-        <p>Progress: {progress.percentage}%</p>
-
-        <p>
-          Status:
-          {progress.completed ? " Completed" : " In Progress"}
+  if (error) {
+    return (
+      <div className="rounded-lg border border-red-300 bg-red-50 p-8 text-center">
+        <p className="font-medium text-red-600">
+          Unable to load this video.
         </p>
+
+        <p className="mt-2 text-sm text-gray-600">
+          Please check the video URL or try again later.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      tabIndex={0}
+      onKeyDown={handleKeyDown}
+      className="mx-auto w-full max-w-5xl rounded-lg bg-black p-4 outline-none"
+    >
+      <h2 className="mb-3 text-white font-semibold">
+        {title}
+      </h2>
+
+      <div className="relative aspect-video w-full overflow-hidden rounded-lg">
+        {loading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black text-white">
+            Loading video...
+          </div>
+        )}
+
+        <video
+          ref={videoRef}
+          className="h-full w-full"
+          src={videoUrl}
+        />
+      </div>
+
+      <div className="mt-4 space-y-4">
+
+        <input
+          type="range"
+          min={0}
+          max={duration}
+          value={currentTime}
+          onChange={handleSeek}
+          className="w-full"
+        />
+
+        <div className="flex flex-wrap items-center gap-3">
+
+          <button
+            onClick={togglePlay}
+            className="rounded bg-blue-600 px-4 py-2 text-white"
+          >
+            {playing ? "Pause" : "Play"}
+          </button>
+
+          <button
+            onClick={toggleMute}
+            className="rounded bg-gray-700 px-4 py-2 text-white"
+          >
+            {muted ? "Unmute" : "Mute"}
+          </button>
+
+          <button
+            onClick={toggleFullscreen}
+            className="rounded bg-gray-700 px-4 py-2 text-white"
+          >
+            Fullscreen
+          </button>
+
+          <div className="flex items-center gap-2">
+
+            <span className="text-white text-sm">
+              Volume
+            </span>
+
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.1}
+              value={volume}
+              onChange={handleVolume}
+            />
+
+          </div>
+
+          <select
+            value={playbackRate}
+            onChange={(e) =>
+              changeSpeed(Number(e.target.value))
+            }
+            className="rounded p-2"
+          >
+            <option value={0.5}>0.5x</option>
+            <option value={1}>1x</option>
+            <option value={1.25}>1.25x</option>
+            <option value={1.5}>1.5x</option>
+            <option value={2}>2x</option>
+          </select>
+
+          <span className="ml-auto text-sm text-white">
+            {formatTime(currentTime)} / {formatTime(duration)}
+          </span>
+
+        </div>
+
       </div>
     </div>
   );
