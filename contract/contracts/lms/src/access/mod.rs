@@ -116,10 +116,8 @@ impl AccessControl {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{
-        testutils::Address as _,
-        Address, Env,
-    };
+    use soroban_sdk::testutils::Address as _;
+    use soroban_sdk::{Address, Env};
 
     fn setup() -> (Env, Address, Address, Address, Address) {
         let env = Env::default();
