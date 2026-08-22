@@ -3,9 +3,39 @@
 import React, { useState } from 'react';
 import MultiSourceDataAggregator from '../../components/MultiSourceDataAggregator';
 import SessionTimeoutManager from '../../components/SessionTimeoutManager';
+import { DIDCredentialCard } from '../../components/ui/molecules';
+import ConferenceFloorMap from '../../components/ConferenceFloorMap';
+import UniversalDataGrid, { DEFAULT_ATTENDEES, ATTENDEE_COLUMNS } from '../../components/UniversalDataGrid';
 
 // Demo page for testing both components
 const ComponentDemoPage: React.FC = () => {
+  const sampleCredentials = [
+    {
+      id: 'cred-kyc',
+      type: 'KYC Proof',
+      status: 'verified' as const,
+      issuerName: 'Civic Pass Provider',
+      issuerDid: 'did:key:z6Mkq5Ld8gV9p4K9s7tB8aC7d3f8g9h0',
+      timestamp: '2026-06-20T10:00:00Z',
+    },
+    {
+      id: 'cred-email',
+      type: 'Email Credential',
+      status: 'pending' as const,
+      issuerName: 'Gatherraa Auth Server',
+      issuerDid: 'did:web:gatherraa.com:auth',
+      timestamp: '2026-06-24T12:00:00Z',
+    },
+    {
+      id: 'cred-wallet',
+      type: 'Wallet Ownership Proof',
+      status: 'revoked' as const,
+      issuerName: 'Etherscan Verifier',
+      issuerDid: 'did:ethr:0x1234567890123456789012345678901234567890',
+      timestamp: '2026-06-01T15:30:00Z',
+      revocationReason: 'Private key compromise reported by the wallet holder.',
+    },
+  ];
   // Sample data sources for MultiSourceDataAggregator
   const dataSources = [
     {
@@ -59,9 +89,49 @@ const ComponentDemoPage: React.FC = () => {
             Component Demo Page
           </h1>
           <p className="text-lg text-gray-600">
-            Testing MultiSourceDataAggregator and SessionTimeoutManager components
+            Testing MultiSourceDataAggregator, SessionTimeoutManager, and DIDCredentialCard components
           </p>
         </div>
+
+        {/* DID Credential Card Demo */}
+        <section>
+          <h2 className="text-2xl font-semibold text-gray-800 mb-4">
+            DIDCredentialCard Demo
+          </h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {sampleCredentials.map((cred) => (
+              <DIDCredentialCard key={cred.id} credential={cred} />
+            ))}
+          </div>
+        </section>
+
+        {/* ConferenceFloorMap Demo */}
+        <section>
+          <h2 className="text-2xl font-semibold text-gray-800 mb-4">
+            ConferenceFloorMap Demo
+          </h2>
+          <p className="text-sm text-gray-600 mb-4">
+            Scroll or use the toolbar to zoom, drag to pan, click a booth for live occupancy details.
+          </p>
+          <ConferenceFloorMap
+            onBoothClick={(booth) => console.log('Booth clicked:', booth)}
+          />
+        </section>
+
+        {/* UniversalDataGrid Demo */}
+        <section>
+          <h2 className="text-2xl font-semibold text-gray-800 mb-4">
+            UniversalDataGrid Demo
+          </h2>
+          <p className="text-sm text-gray-600 mb-4">
+            5,000 virtualized rows. Click a header to sort, type in a column filter, use the pin icon to stick a column left/right, and use Export CSV. Arrow keys navigate cells; Enter/Space sorts a focused header.
+          </p>
+          <UniversalDataGrid
+            data={DEFAULT_ATTENDEES}
+            columns={ATTENDEE_COLUMNS}
+            getRowId={(row) => row.id}
+          />
+        </section>
 
         {/* MultiSourceDataAggregator Demo */}
         <section>
