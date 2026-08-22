@@ -13,12 +13,37 @@ pub struct AccessControl;
 impl AccessControl {
     /// Register the first LMS administrator.
     ///
-    /// This operation is intended to be used during contract initialization.
-    /// The administrator must authorize the registration.
+    /// This runs exactly once, at contract initialization. It is the only
+    /// route to an administrator role that does not require an existing
+    /// administrator's approval, which is precisely why it must be a
+    /// one-time event.
+    ///
+    /// The guard is on the contract, not on the address. Checking only that
+    /// *this* address is unregistered would leave the door open: any fresh
+    /// address could call this after launch and appoint itself
+    /// administrator, then hand out instructor and administrator roles at
+    /// will. `AlreadyRegistered` protects one address; `AlreadyInitialized`
+    /// protects the contract.
+    ///
+    /// # Errors
+    /// * `AlreadyInitialized` — initialization has already happened
+    /// * `AlreadyRegistered` — the address somehow already holds a role
     pub fn initialize_admin(env: &Env, admin: &Address) -> Result<(), AccessError> {
         admin.require_auth();
 
-        storage::set_role(env, admin, Role::Admin)
+        if storage::is_initialized(env) {
+            return Err(AccessError::AlreadyInitialized);
+        }
+
+        storage::set_role(env, admin, Role::Admin)?;
+        storage::mark_initialized(env);
+
+        Ok(())
+    }
+
+    /// Whether the contract has been initialized.
+    pub fn is_initialized(env: &Env) -> bool {
+        storage::is_initialized(env)
     }
 
     /// Register an additional administrator.
@@ -116,220 +141,397 @@ impl AccessControl {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::LmsContract;
     use soroban_sdk::testutils::Address as _;
     use soroban_sdk::{Address, Env};
 
-    fn setup() -> (Env, Address, Address, Address, Address) {
+    /// Run one contract call.
+    ///
+    /// These functions touch contract storage, which the host only permits
+    /// inside a contract invocation — calling them straight from a test
+    /// fails with `Error(Context, InternalError)`, "no contract running".
+    ///
+    /// Each call also needs its own frame. Two `require_auth()` calls on the
+    /// same address within a single frame fail with
+    /// `Error(Auth, ExistingValue)`, "frame is already authorized", so
+    /// several operations cannot share one `as_contract` block. One frame
+    /// per call matches how these functions are actually reached anyway:
+    /// one invocation per transaction.
+    fn call<T>(env: &Env, contract_id: &Address, f: impl FnOnce() -> T) -> T {
+        env.as_contract(contract_id, f)
+    }
+
+    fn setup() -> (Env, Address, Address, Address, Address, Address) {
         let env = Env::default();
+        let contract_id = env.register(LmsContract, ());
 
         let admin = Address::generate(&env);
         let instructor = Address::generate(&env);
         let student = Address::generate(&env);
         let outsider = Address::generate(&env);
 
-        (env, admin, instructor, student, outsider)
+        (env, contract_id, admin, instructor, student, outsider)
     }
 
     #[test]
     fn initializes_admin() {
-        let (env, admin, _, _, _) = setup();
+        let (env, id, admin, _, _, _) = setup();
 
         env.mock_all_auths();
 
-        AccessControl::initialize_admin(&env, &admin).unwrap();
-
-        assert_eq!(AccessControl::get_role(&env, &admin), Some(Role::Admin));
-    }
-
-    #[test]
-    fn duplicate_registration_is_rejected() {
-        let (env, admin, _, _, _) = setup();
-
-        env.mock_all_auths();
-
-        AccessControl::initialize_admin(&env, &admin).unwrap();
+        call(&env, &id, || {
+            AccessControl::initialize_admin(&env, &admin).unwrap()
+        });
 
         assert_eq!(
-            AccessControl::initialize_admin(&env, &admin),
-            Err(AccessError::AlreadyRegistered)
+            call(&env, &id, || AccessControl::get_role(&env, &admin)),
+            Some(Role::Admin)
         );
     }
 
     #[test]
-    fn admin_can_register_another_admin() {
-        let (env, admin, new_admin, _, _) = setup();
+    fn re_initializing_with_the_same_admin_is_rejected() {
+        let (env, id, admin, _, _, _) = setup();
 
         env.mock_all_auths();
 
-        AccessControl::initialize_admin(&env, &admin).unwrap();
+        call(&env, &id, || {
+            AccessControl::initialize_admin(&env, &admin).unwrap()
+        });
 
-        AccessControl::register_admin(&env, &admin, &new_admin).unwrap();
+        assert_eq!(
+            call(&env, &id, || AccessControl::initialize_admin(&env, &admin)),
+            Err(AccessError::AlreadyInitialized)
+        );
+    }
 
-        assert_eq!(AccessControl::get_role(&env, &new_admin), Some(Role::Admin));
+    /// The one that matters. Guarding only the address would let any fresh
+    /// address self-appoint as administrator after launch, which is a full
+    /// privilege escalation: an attacker-admin can then authorize
+    /// instructors and mint further administrators at will.
+    #[test]
+    fn a_second_address_cannot_initialize_after_launch() {
+        let (env, id, founder, _, _, attacker) = setup();
+
+        env.mock_all_auths();
+
+        call(&env, &id, || {
+            AccessControl::initialize_admin(&env, &founder).unwrap()
+        });
+
+        assert_eq!(
+            call(&env, &id, || AccessControl::initialize_admin(
+                &env, &attacker
+            )),
+            Err(AccessError::AlreadyInitialized)
+        );
+
+        // The attacker gained nothing at all.
+        assert_eq!(
+            call(&env, &id, || AccessControl::get_role(&env, &attacker)),
+            None
+        );
+
+        // And the legitimate admin is untouched.
+        assert_eq!(
+            call(&env, &id, || AccessControl::get_role(&env, &founder)),
+            Some(Role::Admin)
+        );
+    }
+
+    #[test]
+    fn initialization_state_is_reported() {
+        let (env, id, admin, _, _, _) = setup();
+
+        env.mock_all_auths();
+
+        assert!(!call(&env, &id, || AccessControl::is_initialized(&env)));
+
+        call(&env, &id, || {
+            AccessControl::initialize_admin(&env, &admin).unwrap()
+        });
+
+        assert!(call(&env, &id, || AccessControl::is_initialized(&env)));
+    }
+
+    /// A rejected initialization must not leave the marker set, or a failed
+    /// deployment attempt would brick the contract permanently.
+    #[test]
+    fn a_failed_initialization_leaves_the_contract_uninitialized() {
+        let (env, id, _, _, student, _) = setup();
+
+        env.mock_all_auths();
+
+        // Registering as a student first makes `set_role` fail inside
+        // `initialize_admin`, after the guard has been passed.
+        call(&env, &id, || {
+            AccessControl::register_student(&env, &student).unwrap()
+        });
+
+        assert_eq!(
+            call(&env, &id, || AccessControl::initialize_admin(
+                &env, &student
+            )),
+            Err(AccessError::AlreadyRegistered)
+        );
+
+        assert!(
+            !call(&env, &id, || AccessControl::is_initialized(&env)),
+            "a failed initialization must not mark the contract initialized"
+        );
+
+        // Recovery is still possible.
+        let admin = Address::generate(&env);
+        call(&env, &id, || {
+            AccessControl::initialize_admin(&env, &admin).unwrap()
+        });
+        assert!(call(&env, &id, || AccessControl::is_initialized(&env)));
+    }
+
+    #[test]
+    fn admin_can_register_another_admin() {
+        let (env, id, admin, new_admin, _, _) = setup();
+
+        env.mock_all_auths();
+
+        call(&env, &id, || {
+            AccessControl::initialize_admin(&env, &admin).unwrap()
+        });
+        call(&env, &id, || {
+            AccessControl::register_admin(&env, &admin, &new_admin).unwrap()
+        });
+
+        assert_eq!(
+            call(&env, &id, || AccessControl::get_role(&env, &new_admin)),
+            Some(Role::Admin)
+        );
     }
 
     #[test]
     fn non_admin_cannot_register_admin() {
-        let (env, admin, _, student, _) = setup();
+        let (env, id, admin, _, student, _) = setup();
 
         env.mock_all_auths();
 
-        AccessControl::initialize_admin(&env, &admin).unwrap();
-        AccessControl::register_student(&env, &student).unwrap();
+        call(&env, &id, || {
+            AccessControl::initialize_admin(&env, &admin).unwrap()
+        });
+        call(&env, &id, || {
+            AccessControl::register_student(&env, &student).unwrap()
+        });
 
         assert_eq!(
-            AccessControl::register_admin(&env, &student, &student,),
+            call(&env, &id, || AccessControl::register_admin(
+                &env, &student, &student
+            )),
             Err(AccessError::AdminRequired)
         );
     }
 
     #[test]
     fn admin_can_authorize_instructor() {
-        let (env, admin, instructor, _, _) = setup();
+        let (env, id, admin, instructor, _, _) = setup();
 
         env.mock_all_auths();
 
-        AccessControl::initialize_admin(&env, &admin).unwrap();
-
-        AccessControl::authorize_instructor(&env, &admin, &instructor).unwrap();
+        call(&env, &id, || {
+            AccessControl::initialize_admin(&env, &admin).unwrap()
+        });
+        call(&env, &id, || {
+            AccessControl::authorize_instructor(&env, &admin, &instructor).unwrap()
+        });
 
         assert_eq!(
-            AccessControl::get_role(&env, &instructor),
+            call(&env, &id, || AccessControl::get_role(&env, &instructor)),
             Some(Role::Instructor)
         );
     }
 
     #[test]
     fn non_admin_cannot_authorize_instructor() {
-        let (env, admin, _, student, instructor) = setup();
+        let (env, id, admin, instructor, student, _) = setup();
 
         env.mock_all_auths();
 
-        AccessControl::initialize_admin(&env, &admin).unwrap();
-        AccessControl::register_student(&env, &student).unwrap();
+        call(&env, &id, || {
+            AccessControl::initialize_admin(&env, &admin).unwrap()
+        });
+        call(&env, &id, || {
+            AccessControl::register_student(&env, &student).unwrap()
+        });
 
         assert_eq!(
-            AccessControl::authorize_instructor(&env, &student, &instructor,),
+            call(&env, &id, || AccessControl::authorize_instructor(
+                &env,
+                &student,
+                &instructor
+            )),
             Err(AccessError::AdminRequired)
         );
     }
 
     #[test]
     fn student_can_register() {
-        let (env, _, _, student, _) = setup();
+        let (env, id, _, _, student, _) = setup();
 
         env.mock_all_auths();
 
-        AccessControl::register_student(&env, &student).unwrap();
+        call(&env, &id, || {
+            AccessControl::register_student(&env, &student).unwrap()
+        });
 
-        assert_eq!(AccessControl::get_role(&env, &student), Some(Role::Student));
+        assert_eq!(
+            call(&env, &id, || AccessControl::get_role(&env, &student)),
+            Some(Role::Student)
+        );
     }
 
     #[test]
     fn unknown_user_has_no_role() {
-        let (env, _, _, _, outsider) = setup();
+        let (env, id, _, _, _, outsider) = setup();
 
-        assert_eq!(AccessControl::get_role(&env, &outsider), None);
+        assert_eq!(
+            call(&env, &id, || AccessControl::get_role(&env, &outsider)),
+            None
+        );
     }
 
     #[test]
     fn admin_authorization_succeeds_for_admin() {
-        let (env, admin, _, _, _) = setup();
+        let (env, id, admin, _, _, _) = setup();
 
         env.mock_all_auths();
 
-        AccessControl::initialize_admin(&env, &admin).unwrap();
+        call(&env, &id, || {
+            AccessControl::initialize_admin(&env, &admin).unwrap()
+        });
 
-        assert_eq!(AccessControl::require_admin(&env, &admin), Ok(()));
+        assert_eq!(
+            call(&env, &id, || AccessControl::require_admin(&env, &admin)),
+            Ok(())
+        );
     }
 
     #[test]
     fn admin_authorization_rejects_student() {
-        let (env, _, _, student, _) = setup();
+        let (env, id, _, _, student, _) = setup();
 
         env.mock_all_auths();
 
-        AccessControl::register_student(&env, &student).unwrap();
+        call(&env, &id, || {
+            AccessControl::register_student(&env, &student).unwrap()
+        });
 
         assert_eq!(
-            AccessControl::require_admin(&env, &student),
+            call(&env, &id, || AccessControl::require_admin(&env, &student)),
             Err(AccessError::AdminRequired)
         );
     }
 
     #[test]
     fn instructor_authorization_succeeds_for_instructor() {
-        let (env, admin, instructor, _, _) = setup();
+        let (env, id, admin, instructor, _, _) = setup();
 
         env.mock_all_auths();
 
-        AccessControl::initialize_admin(&env, &admin).unwrap();
+        call(&env, &id, || {
+            AccessControl::initialize_admin(&env, &admin).unwrap()
+        });
+        call(&env, &id, || {
+            AccessControl::authorize_instructor(&env, &admin, &instructor).unwrap()
+        });
 
-        AccessControl::authorize_instructor(&env, &admin, &instructor).unwrap();
-
-        assert_eq!(AccessControl::require_instructor(&env, &instructor), Ok(()));
+        assert_eq!(
+            call(&env, &id, || AccessControl::require_instructor(
+                &env,
+                &instructor
+            )),
+            Ok(())
+        );
     }
 
     #[test]
     fn instructor_authorization_rejects_student() {
-        let (env, _, _, student, _) = setup();
+        let (env, id, _, _, student, _) = setup();
 
         env.mock_all_auths();
 
-        AccessControl::register_student(&env, &student).unwrap();
+        call(&env, &id, || {
+            AccessControl::register_student(&env, &student).unwrap()
+        });
 
         assert_eq!(
-            AccessControl::require_instructor(&env, &student),
+            call(&env, &id, || AccessControl::require_instructor(
+                &env, &student
+            )),
             Err(AccessError::InstructorRequired)
         );
     }
 
     #[test]
     fn staff_authorization_accepts_admin() {
-        let (env, admin, _, _, _) = setup();
+        let (env, id, admin, _, _, _) = setup();
 
         env.mock_all_auths();
 
-        AccessControl::initialize_admin(&env, &admin).unwrap();
+        call(&env, &id, || {
+            AccessControl::initialize_admin(&env, &admin).unwrap()
+        });
 
-        assert_eq!(AccessControl::require_staff(&env, &admin), Ok(()));
+        assert_eq!(
+            call(&env, &id, || AccessControl::require_staff(&env, &admin)),
+            Ok(())
+        );
     }
 
     #[test]
     fn staff_authorization_accepts_instructor() {
-        let (env, admin, instructor, _, _) = setup();
+        let (env, id, admin, instructor, _, _) = setup();
 
         env.mock_all_auths();
 
-        AccessControl::initialize_admin(&env, &admin).unwrap();
+        call(&env, &id, || {
+            AccessControl::initialize_admin(&env, &admin).unwrap()
+        });
+        call(&env, &id, || {
+            AccessControl::authorize_instructor(&env, &admin, &instructor).unwrap()
+        });
 
-        AccessControl::authorize_instructor(&env, &admin, &instructor).unwrap();
-
-        assert_eq!(AccessControl::require_staff(&env, &instructor), Ok(()));
+        assert_eq!(
+            call(&env, &id, || AccessControl::require_staff(
+                &env,
+                &instructor
+            )),
+            Ok(())
+        );
     }
 
     #[test]
     fn staff_authorization_rejects_student() {
-        let (env, _, _, student, _) = setup();
+        let (env, id, _, _, student, _) = setup();
 
         env.mock_all_auths();
 
-        AccessControl::register_student(&env, &student).unwrap();
+        call(&env, &id, || {
+            AccessControl::register_student(&env, &student).unwrap()
+        });
 
         assert_eq!(
-            AccessControl::require_staff(&env, &student),
+            call(&env, &id, || AccessControl::require_staff(&env, &student)),
             Err(AccessError::Unauthorized)
         );
     }
 
     #[test]
     fn registered_authorization_rejects_unknown_user() {
-        let (env, _, _, _, outsider) = setup();
+        let (env, id, _, _, _, outsider) = setup();
 
         env.mock_all_auths();
 
         assert_eq!(
-            AccessControl::require_registered(&env, &outsider),
+            call(&env, &id, || AccessControl::require_registered(
+                &env, &outsider
+            )),
             Err(AccessError::UserNotRegistered)
         );
     }

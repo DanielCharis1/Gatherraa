@@ -22,4 +22,12 @@ pub enum AccessError {
 
     /// No administrator has been initialized yet.
     AdminNotInitialized = 6,
+
+    /// The contract has already been initialized.
+    ///
+    /// Initialization is the one path to an administrator role that needs no
+    /// existing administrator's approval, so it has to be a one-time event.
+    /// Without this, any address could call `initialize` after launch and
+    /// appoint itself administrator.
+    AlreadyInitialized = 7,
 }
