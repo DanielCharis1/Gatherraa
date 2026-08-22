@@ -1,6 +1,6 @@
 use soroban_sdk::{Address, Env};
 
-use crate::StorageKey;
+use crate::{LmsVersion, StorageKey};
 
 use super::{
     errors::AccessError,
@@ -44,4 +44,26 @@ pub fn set_role(env: &Env, user: &Address, role: Role) -> Result<(), AccessError
         .set(&StorageKey::User(user.clone()), &role);
 
     Ok(())
+}
+
+/// Returns whether the contract has been initialized.
+///
+/// The marker lives in instance storage rather than persistent storage
+/// because it is contract-level configuration: it shares the contract's own
+/// lifetime and archival, and there is exactly one of it. Per-user records
+/// stay in persistent storage, where they are keyed and extended
+/// individually.
+pub fn is_initialized(env: &Env) -> bool {
+    env.storage().instance().has(&StorageKey::Configuration)
+}
+
+/// Mark the contract as initialized.
+///
+/// Stores the interface version rather than a bare flag, so the same entry
+/// answers "has this been initialized" and "which interface version was it
+/// initialized at" — the latter being what a future migration would need.
+pub fn mark_initialized(env: &Env) {
+    env.storage()
+        .instance()
+        .set(&StorageKey::Configuration, &LmsVersion::V1);
 }
