@@ -41,7 +41,6 @@ jobs:
       - name: Check formatting
         working-directory: contract
         run: cargo fmt --all -- --check
-        continue-on-error: true
 
       - name: Run Clippy
         working-directory: contract
@@ -104,6 +103,10 @@ jobs:
       - name: Run tests
         working-directory: app/backend
         run: npm test
+
+      - name: Check OpenAPI schema drift
+        working-directory: app/backend
+        run: npm run openapi:check
 
   # --- Frontend Jobs ---
   frontend-lint:
