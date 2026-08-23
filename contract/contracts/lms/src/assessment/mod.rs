@@ -1,4 +1,5 @@
 pub mod errors;
+pub mod scoring;
 pub mod storage;
 pub mod types;
 
@@ -51,19 +52,12 @@ impl AssessmentService {
         }
 
         let config =
-            storage::get_config(env, assessment_id).ok_or(AssessmentError::AssessmentNotFound)?;
+        storage::get_config(env, assessment_id).ok_or(AssessmentError::AssessmentNotFound)?;
 
-        if score > config.max_score {
-            return Err(AssessmentError::InvalidScore);
-        }
+        let passed = scoring::validate_score(score, &config)?;
 
         let current_attempts = storage::get_attempt_count(env, &student, assessment_id);
-        if current_attempts >= config.max_attempts {
-            return Err(AssessmentError::AttemptLimitExceeded);
-        }
-        let attempt = current_attempts + 1;
-
-        let passed = score >= config.passing_score;
+        let attempt = scoring::check_attempt_limit(current_attempts, config.max_attempts)?;
         let result = AssessmentResult {
             student: student.clone(),
             assessment_id,
