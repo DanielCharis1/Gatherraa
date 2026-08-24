@@ -37,17 +37,20 @@ impl Progress {
         }
 
         let timestamp = env.ledger().timestamp();
-        storage::set_course(env, &Course {
-            course_id,
-            instructor: caller.clone(),
-            title: String::from_str(env, ""),
-            description_uri: String::from_str(env, ""),
-            price: 0,
-            status: CourseStatus::Draft,
-            created_at: timestamp,
-            updated_at: timestamp,
-            total_lessons,
-        });
+        storage::set_course(
+            env,
+            &Course {
+                course_id,
+                instructor: caller.clone(),
+                title: String::from_str(env, ""),
+                description_uri: String::from_str(env, ""),
+                price: 0,
+                status: CourseStatus::Draft,
+                created_at: timestamp,
+                updated_at: timestamp,
+                total_lessons,
+            },
+        );
         events::course_created(env, course_id, caller, total_lessons);
 
         Ok(())
