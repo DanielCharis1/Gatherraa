@@ -1,8 +1,7 @@
 use soroban_sdk::{Address, Env};
 
 use crate::StorageKey;
-
-use super::types::Course;
+use crate::course::Course;
 
 /// Returns whether a course is registered under the given identifier.
 pub fn has_course(env: &Env, course_id: u32) -> bool {
