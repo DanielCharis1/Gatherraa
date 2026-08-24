@@ -8,6 +8,7 @@ pub use types::{AssessmentConfig, AssessmentResult};
 use soroban_sdk::{Address, Env};
 
 use crate::access::{AccessControl, Role};
+use crate::events;
 
 /// Assessment submission and result operations for the LMS contract.
 pub struct AssessmentService;
@@ -76,14 +77,7 @@ impl AssessmentService {
         storage::set_attempt_count(env, &student, assessment_id, attempt);
         storage::set_result(env, &student, assessment_id, attempt, &result);
 
-        env.events().publish(
-            (
-                soroban_sdk::symbol_short!("asmt_sub"),
-                student,
-                assessment_id,
-            ),
-            (attempt, score, passed),
-        );
+        events::assessment_submitted(env, assessment_id, &student, attempt, score, passed);
 
         Ok(result)
     }

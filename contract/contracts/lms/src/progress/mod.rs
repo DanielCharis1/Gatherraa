@@ -8,6 +8,7 @@ pub use types::{Course, CourseProgress, COMPLETE_BASIS_POINTS};
 use soroban_sdk::{Address, Env};
 
 use crate::access::AccessControl;
+use crate::events;
 
 /// Course progress operations for the LMS contract.
 pub struct Progress;
@@ -41,6 +42,7 @@ impl Progress {
                 total_lessons,
             },
         );
+        events::course_created(env, course_id, caller, total_lessons);
 
         Ok(())
     }
@@ -83,6 +85,11 @@ impl Progress {
 
         let completed = storage::get_completed_count(env, student, course_id);
         storage::set_completed_count(env, student, course_id, completed + 1);
+        events::lesson_completed(env, course_id, lesson_index, student);
+
+        if completed + 1 == course.total_lessons {
+            events::course_completed(env, course_id, student);
+        }
 
         Ok(())
     }
