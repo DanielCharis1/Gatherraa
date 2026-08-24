@@ -3,6 +3,7 @@
 mod access;
 mod contract;
 mod error;
+pub mod events;
 mod progress;
 mod storage;
 mod types;
