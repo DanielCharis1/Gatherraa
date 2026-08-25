@@ -1,6 +1,7 @@
 use soroban_sdk::{contract, contractimpl, Address, Env};
 
 use crate::access::{AccessControl, AccessError, Role, UserRecord};
+use crate::course::{Course, CourseError, Courses};
 use crate::types::LmsVersion;
 
 /// Root contract for the Learning Management System.
@@ -93,6 +94,34 @@ impl LmsContract {
     /// Whether an address holds a specific role.
     pub fn has_role(env: Env, user: Address, role: Role) -> bool {
         AccessControl::has_role(&env, &user, role)
+    }
+
+    /// Create a draft course for an authorized administrator or instructor.
+    pub fn create_course(
+        env: Env,
+        caller: Address,
+        course_id: u32,
+        instructor: Address,
+        title: soroban_sdk::String,
+        description_uri: soroban_sdk::String,
+        price: i128,
+        total_lessons: u32,
+    ) -> Result<(), CourseError> {
+        Courses::create_course(
+            &env,
+            &caller,
+            course_id,
+            &instructor,
+            title,
+            description_uri,
+            price,
+            total_lessons,
+        )
+    }
+
+    /// Retrieve a course by its unique identifier.
+    pub fn get_course(env: Env, course_id: u32) -> Option<Course> {
+        Courses::get_course(&env, course_id)
     }
 }
 
