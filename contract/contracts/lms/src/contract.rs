@@ -2,6 +2,7 @@ use soroban_sdk::{contract, contractimpl, Address, Env};
 
 use crate::access::{AccessControl, AccessError, Role, UserRecord};
 use crate::course::{Course, CourseError, Courses};
+use crate::module::{Module, ModuleError, Modules};
 use crate::types::LmsVersion;
 
 /// Root contract for the Learning Management System.
@@ -122,6 +123,55 @@ impl LmsContract {
     /// Retrieve a course by its unique identifier.
     pub fn get_course(env: Env, course_id: u32) -> Option<Course> {
         Courses::get_course(&env, course_id)
+    }
+
+    /// Create a module under an existing course.
+    ///
+    /// Only the course's own instructor may create modules for it.
+    pub fn create_module(
+        env: Env,
+        caller: Address,
+        course_id: u32,
+        module_id: u32,
+        title: soroban_sdk::String,
+        description_uri: soroban_sdk::String,
+        position: u32,
+    ) -> Result<(), ModuleError> {
+        Modules::create_module(
+            &env,
+            &caller,
+            course_id,
+            module_id,
+            title,
+            description_uri,
+            position,
+        )
+    }
+
+    /// Update a module's title, description, and position.
+    ///
+    /// Only the owning course's instructor may update its modules.
+    pub fn update_module(
+        env: Env,
+        caller: Address,
+        module_id: u32,
+        title: soroban_sdk::String,
+        description_uri: soroban_sdk::String,
+        position: u32,
+    ) -> Result<(), ModuleError> {
+        Modules::update_module(&env, &caller, module_id, title, description_uri, position)
+    }
+
+    /// Delete a module.
+    ///
+    /// Only the owning course's instructor may delete its modules.
+    pub fn delete_module(env: Env, caller: Address, module_id: u32) -> Result<(), ModuleError> {
+        Modules::delete_module(&env, &caller, module_id)
+    }
+
+    /// Retrieve a module by its unique identifier.
+    pub fn get_module(env: Env, module_id: u32) -> Option<Module> {
+        Modules::get_module(&env, module_id)
     }
 }
 
