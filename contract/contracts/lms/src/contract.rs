@@ -3,6 +3,7 @@ use soroban_sdk::{contract, contractimpl, Address, Env};
 use crate::access::{AccessControl, AccessError, Role, UserRecord};
 use crate::course::{Course, CourseError, Courses};
 use crate::module::{Module, ModuleError, Modules};
+use crate::enrollment::{Enrollment, EnrollmentError, Enrollments};
 use crate::types::LmsVersion;
 
 /// Root contract for the Learning Management System.

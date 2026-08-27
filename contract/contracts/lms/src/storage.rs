@@ -15,6 +15,11 @@ pub enum StorageKey {
 
     /// A registered learning module, keyed by module identifier.
     Module(u32),
+    /// Enrollment of a student in a course.
+    ///
+    /// Keyed by student address and course identifier. The record's status
+    /// distinguishes an active enrollment from a withdrawn one.
+    Enrollment(Address, u32),
 
     /// Cached count of lessons a student has completed in a course.
     ///
